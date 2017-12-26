@@ -1,0 +1,347 @@
+---
+title: "BAYESIAN COMPUTATION"
+author: "Ziyi(Sylvia) Ye"
+date: "2017/10/10"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+### Charpter 10 Problem 5
+**Rejection sampling** and **importance sampling**: Consider the model, yj ∼ Binomial(nj , θj ), where θj=logit−1(α+βxj),forj=1,...,J, and with independent prior distributions, α ∼ t4(0, 22) and β ∼ t4(0, 1). Suppose J = 10, the xj values are randomly drawn from a U(0, 1) distribution, and nj ∼ Poisson+ (5), where Poisson+ is the Poisson distribution restricted to positive values.
+
+#### a) Sample a dataset at random from the model.
+
+```{r}
+library(boot)
+set.seed(5224)
+alpha <- 2*rt(1, 4)
+beta <- rt(1, 4)
+x <- runif(10)
+n <- rpois(10, 5)
+theta <- inv.logit(alpha + beta*x)
+y <- rbinom(10, size=n, prob=theta)
+rm(alpha);rm(beta);rm(theta)
+```
+
+#### b) Use rejection sampling to get 1000 independent posterior draws from (α, β)
+```{r}
+#Calculate M
+fit <- glm(cbind(y,n-y)~x,family=binomial(link="logit")) 
+alpha_hat <- coef(fit)[1]
+beta_hat <- coef(fit)[2]
+log_likeli <- function(a, b, x, n, y){
+  a*sum(y)+b*sum(x*y)-sum(n*log(1+exp(a+b*x)))
+}
+log_M <- log_likeli(alpha_hat, beta_hat, x, n, y)
+
+# Sampling posterior
+S <- 1000
+alpha.sim <- rep(NA,S)
+beta.sim <- rep(NA,S)
+for (s in 1:S){
+  accept <- FALSE 
+  while (!accept) {
+    alpha <- 2*rt(1,df=4)
+    beta <- rt(1,df=4)
+    U <- runif(1)
+    log_likelihood <- log_likeli(alpha,beta,x,n,y) 
+    accept <- (log(U)<(log_likelihood-log_M))
+  }
+  alpha.sim[s] <- alpha 
+  beta.sim[s] <- beta
+}
+
+#posterior means for alpha and beta
+post.mean <- c(mean(alpha.sim),mean(beta.sim)) 
+names(post.mean) <- c("alpha", "beta")
+post.mean
+
+#quantiles for alpha and beta
+quantile(alpha.sim,c(.025, .25, .50, .75, .975))
+quantile(beta.sim,c(.025, .25, .50, .75, .975))
+
+plot(alpha.sim, beta.sim)
+```
+
+#### c) Approximate the posterior density for (α,β) by a normal centered at the posterior mode with covariance matrix fit to the curvature at the mode
+```{r}
+library(mnormt)
+library(ggplot2)
+center <- as.vector(coef(fit))
+names(center) <- c("alpha", "beta")
+Cov_matrix <- as.matrix(vcov(fit),2,2)
+rownames(Cov_matrix) <- c("alpha", "beta")
+colnames(Cov_matrix) <- c("alpha", "beta")
+app <- rmnorm(1000000, mean = center, varcov = Cov_matrix)
+alpha_approx <- app[,1]
+beta_approx <- app[,2]
+
+# The normal distribution centered at
+center
+# The covariance matrix 
+Cov_matrix
+# The contour plot is
+ggplot(data.frame(alpha.sim, beta.sim, alpha_approx, beta_approx))+
+  stat_density2d(aes(alpha.sim, beta.sim, color = ..level..))+ 
+  stat_density2d(aes(alpha_approx, beta_approx))
+
+```
+
+
+#### d) Take 1000 draws from the two-dimensional t4 distribution with that center and scale matrix and use importance sampling to estimate E(α|y) and E(β|y)
+```{r}
+library(mnormt)
+S1 <- 1000
+theta.sim <- rmt(S1,coef(fit), vcov(fit), df=4) 
+alpha.sim <- theta.sim[,1]
+beta.sim <- theta.sim[,2]
+w <- rep(NA, S1) 
+for (s in 1:S1) {
+  log.q <- log_likeli(alpha.sim[s], beta.sim[s], x, n, y) + 
+    dt(alpha.sim[s]/2, df=4, log=T) + dt(beta.sim[s], df=4, log=T)
+  log.g <- dmt(c(alpha.sim[s],beta.sim[s]), mean=coef(fit), S=vcov(fit), df=4, log=T)
+  log.w <- log.q - log.g
+  w[s] <- exp(log.w) 
+}
+w.tilde <- w / sum(w)
+
+#estimated posterior mean of alpha and beta
+post.mean1 <- c(sum(w.tilde*alpha.sim), sum(w.tilde*beta.sim)) 
+names(post.mean1) <- c("alpha", "beta")
+post.mean1
+```
+
+#### e) Compute an estimate of effective sample size for importance sampling.
+```{r}
+#estimated effective sample size
+ceiling(1 / sum(w.tilde^2))
+```
+
+### Charpter 11 Problem 2
+
+Metropolis algorithm: Replicate the computations for the bioassay example of Section 3.7 using the Metropolis algorithm. Be sure to define your starting points and your jumping rule. Compute with log-densities (see page 261). Run the simulations long enough for approximate convergence.
+
+```{r}
+library(boot)
+x <- c(-.86, -.30, -.05, .73)
+y <- c(0, 1, 3, 5)
+n <- c(5, 5, 5, 5)
+
+sigma.a <- 1  # Need to play around with these values!
+sigma.b <- 3  # Need to play around with these values!
+alpha0 <- 0.24
+beta0 <- 6.14
+chain.length <- 2000
+
+log.post <- function(alpha, beta, n, x, y){
+ theta <- inv.logit(alpha + beta*x)
+ log.post <- sum(dbinom(y, n, theta, log=T))
+ log.post
+}
+
+MRW.update <- function(alpha, beta, sigma.a, sigma.b, n, x, y){
+ alpha.star <- rnorm(1, alpha, sigma.a)
+ beta.star <- rnorm(1, beta, sigma.b)
+ r <- exp(log.post(alpha.star, beta.star, n, x, y) - 
+          log.post(alpha, beta, n, x, y) )
+ if(runif(1) < r){ alpha <- alpha.star; beta <- beta.star; }
+ return(list(alpha=alpha, beta=beta))
+}
+
+build.chain <- function(alpha0, beta0, sigma.a, sigma.b, chain.length, n,x,y){
+ alpha.chain <- rep(NA, chain.length)
+ beta.chain <- rep(NA, chain.length)
+ alpha <- alpha0; beta <- beta0;
+ for(t in 1:chain.length){
+  foo <- MRW.update(alpha, beta, sigma.a, sigma.b, n, x, y)
+  alpha <- foo$alpha; beta <- foo$beta;
+  alpha.chain[t] <- alpha; beta.chain[t] <- beta;
+ }
+ list(alpha.chain=alpha.chain, beta.chain=beta.chain)
+}
+
+chain <- build.chain(alpha0, beta0, sigma.a, sigma.b, chain.length, n, x, y)
+alpha.chain <- chain$alpha.chain
+beta.chain <- chain$beta.chain
+```
+
+recall the result using analytical way in 3.7
+```{r}
+S <- 1000  # Number of simulations from posterior
+alpha <- seq(-4, 8, .05)
+beta <- seq(-5, 45, .20)
+I <- length(alpha)
+J <- length(beta)
+log.post <- matrix(NA, I, J)
+
+for(i in 1:I){
+ for(j in 1:J){
+  theta <- inv.logit(alpha[i] + beta[j]*x)
+  log.post[i,j] <- sum(dbinom(y, n, theta, log=T))
+}}
+
+maxie <- max(log.post)
+log.post <- log.post - maxie
+post <- exp(log.post)
+delta <- (alpha[2] - alpha[1]) / 2
+epsilon <- (beta[2] - beta[1]) / 2
+post.a <- apply(post, 1, sum)
+alpha.sim <- rep(NA, S)
+beta.sim <- rep(NA, S)
+
+for(s in 1:S){
+ i <- sample(I, 1, prob=post.a)
+ j <- sample(J, 1, prob=post[i,])
+ alpha.sim[s] <- alpha[i] + runif(1, -delta,  delta)
+ beta.sim[s] <- beta[j] + runif(1, -epsilon, epsilon)
+}
+
+par(mfrow = c(1,2))
+plot(alpha.sim, beta.sim)
+plot(alpha.chain, beta.chain)
+```
+
+As the scatterplot shows, we can get the similar result by Metropolis algorithm.
+
+```{r}
+quantile(alpha.chain, c(0.025, 0.25, 0.5, 0.75, 0.975))
+quantile(beta.chain, c(0.025, 0.25, 0.5, 0.75, 0.975))
+```
+
+```{r}
+mean(beta.chain > 0)
+LD50.chain = exp(-alpha.chain / beta.chain)
+hist(LD50.chain, breaks=20)
+temp <- quantile(LD50.chain, c(.025, .975))
+abline(v=temp, lty=2)
+quantile(LD50.chain, c(0.025, 0.25, 0.5, 0.75, 0.975))
+```
+
+
+### Charpter 11 Problem 3
+
+**Gibbs sampling**: Table 11.4 contains quality control measurements from 6 machines in a factory. Quality control measurements are expensive and time-consuming, so only 5 measurements were done for each machine. In addition to the existing machines, we are interested in the quality of another machine (the seventh machine). Implement a separate, a pooled and hierarchical Gaussian model with common variance described in Section 11.6. Run the simulations long enough for approximate convergence. Using each of three models—separate, pooled, and hierarchical—report: (i) the posterior distribu- tion of the mean of the quality measurements of the sixth machine, (ii) the predictive distribution for another quality measurement of the sixth machine, and (iii) the posterior distribution of the mean of the quality measurements of the seventh machine.
+
+#### Build the Gibbs Sampling Method
+```{r}
+# Key in data
+J <- 6
+y1 <- c(83, 92, 92, 46, 67)
+y2 <- c(117, 109, 114, 104, 87)
+y3 <- c(101, 93, 92, 86, 67)
+y4 <- c(105, 119, 116, 102, 116)
+y5 <- c(79, 97, 103, 79, 92)
+y6 <- c(57, 92, 104, 77, 100)
+n <- c(length(y1), length(y2), length(y3), length(y4), length(y5), length(y6))
+ybar <- c(mean(y1), mean(y2), mean(y3), mean(y4), mean(y5), mean(y6))
+s <- c(sd(y1), sd(y2), sd(y3), sd(y4), sd(y5), sd(y6))
+
+# Gibbs update functions
+theta.update <- function(mu, sigma, tau, J, n, ybar)
+{
+ V.theta <- 1 / (1/tau^2 + n/sigma^2)
+ theta.hat <- V.theta * (mu/tau^2 + n*ybar/sigma^2)
+ rnorm(J, mean=theta.hat, sd=sqrt(V.theta))
+}
+
+mu.update <- function(theta, tau, J)
+{
+ mu.hat <- mean(theta)
+ rnorm(1, mean=mu.hat, sd=tau/sqrt(J))
+}
+
+sigma.update <- function(theta, ybar, s){
+ sigma2.hat <- sum((n-1)*s^2 + n*(ybar-theta)^2) / sum(n)
+ sigma2 <- sum(n) * sigma2.hat / rchisq(1, df=sum(n))
+ sqrt(sigma2)
+}
+
+tau.update <- function(J, theta, mu)
+{
+ tau2.hat <- sum((theta-mu)^2) / (J-1)
+ tau2 <- (J-1) * tau2.hat / rchisq(1, df=J-1)
+ sqrt(tau2)
+}
+
+# Inputs: chain length, data, starting values
+build.chain <- function(chain.length, J, n, y, s, theta0, mu0, sigma0, tau0){
+ T <- chain.length
+ theta.chain <- matrix(NA, T, J)
+ mu.chain <- rep(NA, T); sigma.chain <- rep(NA, T); tau.chain <- rep(NA, T);
+ theta <- theta0; mu <- mu0; sigma <- sigma0; tau <- tau0;
+ for(t in 1:T)
+ {
+  theta <- theta.update(mu, sigma, tau, J, n, ybar)
+  mu <- mu.update(theta, tau, J)
+  sigma <- sigma.update(theta, ybar, s)
+  tau <- tau.update(J, theta, mu)
+  theta.chain[t,] <- theta; mu.chain[t] <- mu;
+  sigma.chain[t] <- sigma; tau.chain[t] <- tau;
+ }
+ list(theta.chain=theta.chain, mu.chain=mu.chain, 
+     sigma.chain=sigma.chain, tau.chain=tau.chain)
+}
+
+# Initial values
+theta0 <- ybar; mu0 <- mean(theta0); sigma0 <- sqrt(mean(s^2)); tau0 <- sd(ybar);
+
+# Run a single chain
+S <- 10000
+chain <- build.chain(chain.length = S, J, n, y, s, theta0, mu0, sigma0, tau0)
+theta.chain <- chain$theta.chain
+mu.chain <- chain$mu.chain
+sigma.chain <- chain$sigma.chain
+tau.chain <- chain$tau.chain
+```
+
+
+#### i) The posterior distribution of the parameters.
+```{r}
+Results <- matrix(NA, J+3, 5)
+probs <- c(.025, .25, .50, .75, .975)
+
+for(j in 1:J){
+ Results[j, ] <- quantile(theta.chain[,j], probs=probs)
+}
+Results[J+1,] <- quantile(mu.chain, probs=probs)
+Results[J+2, ] <- quantile(sigma.chain, probs=probs)
+Results[J+3, ] <- quantile(tau.chain, probs=probs)
+
+rownames(Results) <- c(paste("theta", 1:J, sep=""), "mu", "sigma", "tau")
+colnames(Results) <- paste(probs*100, "pct", sep="")
+round(Results, 1)
+
+par(mfrow = c(3, 3))
+hist(theta.chain[,1], breaks = 30)
+hist(theta.chain[,2], breaks = 30)
+hist(theta.chain[,3], breaks = 30)
+hist(theta.chain[,4], breaks = 30)
+hist(theta.chain[,5], breaks = 30)
+hist(theta.chain[,6], breaks = 30)
+hist(mu.chain, breaks = 30)
+hist(sigma.chain, breaks = 30)
+hist(tau.chain, breaks = 30)
+```
+
+#### ii) The predictive distribution for another test of the sixth machine
+```{r}
+new_test_6 <- rnorm(S, mean = theta.chain[,6], sd = sigma.chain)
+Results2<- quantile(new_test_6, probs=probs)
+names(Results2) <- paste(probs*100, "pct", sep="")
+round(Results2, 1)
+hist(new_test_6, breaks = 30)
+```
+
+#### iii) The posterior distribution for another test of the 7th machine.
+```{r}
+new_theta <- rnorm(S, mean = mu.chain, sd = tau.chain)
+new_test_7 <- rnorm(S, mean = new_theta, sd = sigma.chain)
+Results3<- quantile(new_test_7, probs=probs)
+names(Results3) <- paste(probs*100, "pct", sep="")
+round(Results3, 1)
+hist(new_test_7, breaks = 50, xlim = c(0, 200))
+```
+
+
+
