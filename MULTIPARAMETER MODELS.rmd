@@ -1,0 +1,286 @@
+---
+title: "MULTIPARAMETER MODELS"
+author: "Sylvia Ye"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+
+
+## Question 1 (Charpter 3 Problem 4)
+
+Inference for a 2 × 2 table: an experiment was performed to estimate the effect of beta- blockers on mortality of cardiac patients. A group of patients were randomly assigned to treatment and control groups: out of 674 patients receiving the control, 39 died, and out of 680 receiving the treatment, 22 died. Assume that the outcomes are independent and binomially distributed, with probabilities of death of p0 and p1 under the control and treatment, respectively.
+
+(a) Set up a noninformative prior distribution on (p0, p1) and obtain posterior simulations.
+
+```{r}
+# Data
+n_0 <- 674
+y_0 <- 39
+n_1 <- 680
+y_1 <- 22
+
+# Uniform priors of p0 and p1
+alpha_0 <- 1
+beta_0 <- 1
+alpha_1 <- 1
+beta_1 <- 1
+
+# Posterior distribution of p0 and p1
+# Model:
+# y1 ~ Binomial(n1, p1)
+# y2 ~ Binomial(n2, p2)
+
+S = 1000
+set.seed(0)
+p0.sim <- rbeta(S, alpha_0 + y_0, beta_0 + n_0 - y_0)
+p1.sim <- rbeta(S, alpha_1 + y_1, beta_1 + n_1 - y_1)
+
+hist(p0.sim)
+temp <- quantile(p0.sim, c(.025, .975))
+abline(v=temp, lty=2)
+abline(v=mean(p0.sim), lty = 3)
+
+hist(p1.sim)
+temp <- quantile(p1.sim, c(.025, .975))
+abline(v=temp, lty=2)
+abline(v=mean(p1.sim), lty = 3)
+```
+
+From the simulation we can see that:
+The mean of p0 is 0.0583 and the 95% CI for p0 is [0.0416, 0.0777].
+The mean of p1 is 0.0338 and the 95% CI for p1 is [0.0205, 0.0500].
+
+
+(b) Summarize the posterior distribution for the odds ratio, (p1/(1-p1))/(p0/(1-p0))
+
+```{r}
+ratio.sim <- p1.sim * (1-p0.sim) / ( p0.sim * (1-p1.sim) )
+hist(ratio.sim)
+temp <- quantile(ratio.sim, c(.025, .975))
+abline(v=temp, lty=2)
+abline(v=mean(ratio.sim), lty = 3)
+```
+
+From above we can see that the 95% CI of theta is [0.313, 0.989], all the area is below 1. So we can conclude that the treatment is efficient.
+
+\newpage
+
+## Question 2: (Charpter 3 Problem 11)
+
+In the bioassay example, replace the uniform prior density by a joint nor- mal prior distribution on (alpha, beta), with alpha ∼ N(0, 22), beta ∼ N(10, 102), and corr(alpha, beta)=0.5.
+
+Model:
+\[y_i|\theta - Binomial(n_i, p_i) \]
+\[logit(\theta_i) = log(\frac{\theta_i}{1 - \theta_i}) = \alpha + \beta x_i \]
+\[\alpha ～ N(0, 22)\]
+\[\beta ～ N(10, 102) \]
+\[Corr(\alpha, \beta) = 0.5 \]
+
+```{r}
+library(boot)
+
+# Key in data
+x <- c(-.86, -.30, -.05, .73)
+n <- c(5, 5, 5, 5)
+y <- c(0, 1, 3, 5)
+
+# hyperprior parameters
+m.a <- 0
+s.a <- 2
+m.b <- 10
+s.b <- 10
+rho <- 0.50
+alpha <- seq(-3, 6, .05)
+beta <- seq(-5, 35, .20)
+I <- length(alpha)
+J <- length(beta)
+
+# Posterior
+log.post <- matrix(rep(NA, I*J), I, J)
+for(i in 1:I){ for(j in 1:J){
+  a <- alpha[i]; b <- beta[j];
+  z.a <- (a - m.a)/s.a; z.b <- (b - m.b)/s.b;
+  log.prior <- -0.5 * (z.a^2 + z.b^2 + 2*rho*z.a*z.b) / (1-rho^2)
+  theta <- inv.logit(a + b * x)
+  log.like <- sum(dbinom(y, n, theta, log=T))
+  log.post[i,j] <- log.like + log.prior
+}}
+temp <- max(log.post)
+log.post <- log.post - temp
+post <- exp(log.post)
+
+# Contour plot
+contours <- c(.001, .01, seq(.05, .95, .10))
+contour(alpha, beta, post, levels=contours, xlab="alpha", ylab="beta", 
+        main="Contours of p(alpha,beta|y)")
+
+# Sample for posterior
+delta = (alpha[2]-alpha[1])/2
+epsilon = (beta[2]-beta[1])/2
+post.a = apply(post,1,sum)
+
+S = 1000
+alpha.sim = rep(NA,S)
+beta.sim = rep(NA,S)
+for(s in 1:S){
+  i = sample(I,1,prob = post.a)
+  j = sample(J,1,prob = post[i,])
+  alpha.sim[s] = alpha[i]+runif(1,-delta,delta)
+  beta.sim[s] = beta[j]+runif(1,-epsilon,epsilon)
+}
+
+# Display the contour and scatterplot
+par(mfrow = c(1,2))
+contour(alpha,beta,post,levels = contours, xlim=range(alpha.sim), ylim=range(beta.sim),
+        xlab="alpha", ylab="beta")
+plot(alpha.sim,beta.sim,xlim = range(alpha.sim),ylim = range(beta.sim),cex = 0.5, 
+     xlab="alpha", ylab="beta")
+```
+
+From the plot above, we can conclude that the contour plot and scatterplot look like a compromise between the prior distribution and the likelihood.
+
+```{r}
+mean(beta.sim > 0)
+LD50.sim = exp(-alpha.sim / beta.sim)
+hist(LD50.sim, breaks=20)
+temp <- quantile(LD50.sim, c(.025, .975))
+abline(v=temp, lty=2)
+temp
+```
+
+From the results above, we can conclude that:
+
+1, The posterior probability beta > 0 is almost 1. So we can say that the drug is harmful.
+
+2, LD50, the dose level at which the probability of death is 50%, can be calculated by LD50 = exp(-alpha/beta). From the simulation above, the 95% posterior interval for LD50 is [0.771, 1.125]
+
+\newpage
+
+## Question 3: (Charpter 3 Problem 12)
+
+Poisson regression model: expand the model of Exercise 2.13(a) by assuming that the number of fatal accidents in year t follows a Poisson distribution with mean α + βt. You will estimate α and β, following the example of the analysis in Section 3.7.
+
+a) Calculate crude estimates and uncertainties for (α,β) using linear regression.
+```{r}
+y <- c(24, 25, 31, 31, 22, 21, 26, 20, 16, 22)
+t <- 1:10
+
+ml<- glm(y~t,family = poisson(link = "log"))
+summary(ml)
+
+# point estimates +/- 5 SEs
+3.3769+c(-5,5)*0.1341 # alpha
+-0.0388+c(-5,5)*0.02265 # beta
+```
+
+From above we can see that:
+
+The estimate of alpha is 3.3769, the standard deviation of alpha is 0.1341.
+The estimate of beta is -.0388, the standard deviation of beta is .02265. P-value of beta is 0.0867, so we have 90% confidence to reject that beta = 0.
+
+Moreover, alpha in [2.5, 4.0] and beta in [-.15, .10] should contain almost all of the posterior probability.
+
+b) Plot the contours and take 1000 draws from the joint posterior density of (α,β).
+```{r}
+# hyperprior parameters
+alpha <- seq(2.5, 4, by=.005)
+beta <- seq(-.15, .10, by=.001)
+I <- length(alpha)
+J <- length(beta)
+
+# posteriror
+log.post <- matrix(rep(NA, I*J), I, J)
+for(i in 1:I){ for(j in 1:J){
+  theta <- exp(alpha[i] + beta[j] * t)
+  log.post[i,j] <- sum(y*log(theta) - theta)
+}}
+temp <- max(log.post)
+log.post <- log.post - temp
+post <- exp(log.post)
+
+# Sample for posterior
+delta <- (alpha[2] - alpha[1]) / 2
+epsilon <- (beta[2] - beta[1]) / 2
+post.ma <- apply(post, 1, sum)
+
+S <- 1000
+alpha.sim <- rep(NA, S)
+beta.sim <- rep(NA, S)
+for(s in 1:S){
+  i <- sample(I, 1, prob=post.ma)
+  j <- sample(J, 1, prob=post[i,])
+  alpha.sim[s] <- alpha[i] + runif(1, -delta, delta)
+  beta.sim[s] <- beta[j] + runif(1, -epsilon, epsilon)
+}
+
+par(mfrow=c(1,2))
+contours <- c(.01, seq(.05, .95, .10))
+contour(alpha, beta, post, levels=contours, xlim=range(alpha.sim), ylim=range(beta.sim), 
+        xlab="alpha", ylab="beta")
+plot(alpha.sim, beta.sim, xlim=range(alpha.sim), ylim=range(beta.sim), cex=.5, 
+     xlab="alpha", ylab="beta")
+```
+
+c) Using your samples of (α, β), plot a histogram of the posterior density for the expected number of fatal accidents in 1986, α + 1986β.
+
+```{r}
+Expected1986 <- exp(alpha.sim + 11*beta.sim)
+hist(Expected1986, breaks = seq(12,31,1))
+temp <- quantile(Expected1986, c(.025, .975))
+abline(v=temp, lty=2)
+mean(Expected1986)
+abline(v=mean(Expected1986), lty=3)
+```
+
+\newpage
+
+## Quantion 4 Chapter 4 Problem 1
+
+Normal approximation: suppose that y1, . . . , y5 are independent samples from a Cauchy distribution with unknown center θ and known scale 1: p(yi|θ) ∝ 1/(1 + (yi − θ)2). Assume that the prior distribution for θ is uniform on [0,1]. Given the observations (y1,...,y5) = (−2,−1,0,1.5,2.5):
+
+a) Find the posterior mode of θ by iteratively solving the equation determined by setting the derivative of the log-likelihood to zero.
+```{r}
+y <- c(43, 44, 45, 46.5, 47.5)
+theta <- seq(40, 50, .01)
+
+dlogp.dtheta <- function(theta, y){sum(2*(y-theta) / (1 + (y-theta)^2))}
+theta_hat <- uniroot(dlogp.dtheta, interval=c(0, 100), y = y)$root
+theta_hat
+
+d2logp.dtheta2 <- function(theta, y){
+  2 * sum( ((y-theta)^2 -1) / (((y-theta)^2 + 1)^2 ))
+}
+theta_hat <- theta_hat - dlogp.dtheta(theta=theta_hat, y=y) / d2logp.dtheta2(theta=theta_hat, y=y)
+theta_hat
+
+d2logp.dtheta2 <- function(theta, y){
+  2 * sum( ((y-theta)^2 -1) / (((y-theta)^2 + 1)^2 ))
+}
+theta_hat <- theta_hat - dlogp.dtheta(theta=theta_hat, y=y) / d2logp.dtheta2(theta=theta_hat, y=y)
+theta_hat
+
+```
+
+c) Constructthenormalapproximationbasedonthesecondderivativeofthelogposterior
+density at the mode. Plot the approximate normal density and compare to the exact density computed in Exercise 2.11.
+```{r}
+# exact density computed in Exercise 2.11
+log.post <- rep(NA, length(theta))
+for(i in 1:length(theta)){ 
+  log.post[i] <- sum(dcauchy(y,theta[i],log=T)) 
+}
+temp <- max(log.post)
+log.post <- log.post - temp
+post <- exp(log.post)
+temp <- .01 * sum(post)  
+post <- post / temp
+plot(theta, post, type="l", ylab="p(theta|y)",ylim = c(0, 0.5))
+
+# based on the second derivative of the log posterior density at the mode.
+d_2 <- -d2logp.dtheta2(theta=theta_hat, y=y)
+curve(dnorm(x, mean=theta_hat, sd=1/sqrt(d_2)), lty=2, add=T)
+legend("topright", lty=c(1,2), cex = 0.8,  legend=c("Exact", "Normal"))
+```
