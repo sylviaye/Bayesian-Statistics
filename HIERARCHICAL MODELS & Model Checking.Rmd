@@ -1,0 +1,385 @@
+---
+title: "HIERARCHICAL MODELS & Model Checking"
+author: "Ziyi(Sylvia) Ye"
+date: "2017/10/10"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+### Charpter 5 Problem 13
+
+Hierarchical binomial model: Exercise 3.8 described a survey of bicycle traffic in Berkeley, California, with data displayed in Table 3.3. For this problem, restrict your attention to the first two rows of the table: residential streets labeled as ‘bike routes,’ which we will use to illustrate this computational exercise.
+
+#### b) Compute the marginal posterior density of the hyperparameters and draw simulations from the joint posterior distribution of the parameters and hyperparameters, as in Section 5.3.
+```{r}
+library(boot)
+set.seed(0)
+
+# Data
+bikes <- c(16,  9, 10, 13, 19, 20, 18, 17, 35, 55)
+other <- c(58, 90, 48, 57, 103, 57, 86, 112, 273, 64)
+y <- bikes
+n <- bikes + other
+
+# find the range of mu: alpha/beta and psi: alpha+beta
+mu <- mean(y/n)
+psi <- mu * (1-mu) / var(y/n) - 1;
+logit(mu)
+log(psi)
+rm(mu)
+rm(psi)
+
+# simulate mu: alpha/beta and psi: alpha+beta
+logit.mu <- seq(-2.5, 0, .01)
+I <- length(logit.mu)
+log.psi <- seq(0, 5.5, .02)
+J<- length(log.psi)
+
+# posterior
+log.post.fun <- function(alpha, beta, y, n) {
+  J <- length(y)
+  temp <- -2*log(alpha+beta)
+  temp <- temp - J*lbeta(alpha,beta)
+  temp <- temp + sum(lbeta(alpha+y,beta+n-y))
+  return(temp)
+}
+
+log.post <- matrix(rep(NA, I*J), I, J)
+for(i in 1:I){ 
+  for(j in 1:J){
+   mu <- inv.logit(logit.mu[i])
+   psi <- exp(log.psi[j]); 
+   alpha <- mu*psi
+   beta <- (1-mu)*psi;
+   log.post[i,j] <- log(alpha)+log(beta)+log.post.fun(alpha,beta,bikes,n)
+  }
+}
+
+temp <- max(log.post)
+log.post <- log.post - temp;
+rm(temp)
+post <- exp(log.post)
+rm(log.post)
+
+# contour plot
+contours <- c(.001, .01, seq(.05, .95, .10))
+contour(logit.mu, log.psi, post, levels=contours, drawlabels=F, 
+        xlab="logit (alpha/beta)", ylab="log (alpha+beta)")
+
+
+```
+
+
+
+####  c) Compare the posterior distributions of the parameters θj to the raw proportions, (number of bicycles / total number of vehicles) in location j. How do the inferences from the posterior distribution differ from the raw proportions?
+```{r}
+# Sampling from the posterior
+delta <- (logit.mu[2] - logit.mu[1]) / 2
+epsilon <- (log.psi[2] - log.psi[1]) / 2
+
+post.lm <- apply(post, 1, sum) # marginal posterior of logit.mu
+
+S <- 1000;
+
+logit.mu.sim <- rep(NA, S); log.psi.sim <- rep(NA, S);
+
+for(s in 1:S){
+ i <- sample(I, 1, prob=post.lm)
+ j <- sample(J, 1, prob=post[i,])
+ logit.mu.sim[s] <- logit.mu[i] + runif(1, -delta, delta)
+ log.psi.sim[s] <- log.psi[j] + runif(1, -epsilon, epsilon)
+}
+
+
+# Posterior inference for tumor probabilities: the theta_j
+J <- length(y);
+
+mu.sim <- inv.logit(logit.mu.sim); psi.sim <- exp(log.psi.sim);
+alpha.sim <- mu.sim * psi.sim; beta.sim <- (1-mu.sim) * psi.sim;
+theta.sim <- rbeta(J*S, shape1=outer(y, alpha.sim, "+"), 
+                   shape2=outer(n-y, beta.sim, "+")) 
+theta.sim <- matrix(theta.sim, J, S)
+
+# Plot 95% posterior intervals for the parameters theta_j 
+# versus the raw proportions yj/nj for j = 1,...,J.
+meds <- apply(theta.sim, 1, median)
+ints <- apply(theta.sim, 1, quantile, prob=c(.05, .95))
+obs <- jitter(y/n, factor=50)
+
+plot(obs, meds, xlim=range(ints), ylim=range(ints), pch=19, cex=.50, 
+ xlab="Observed rate", ylab="90% posterior interval")
+
+abline(0, 1, lty = 2)
+m <- lm(meds~obs)
+abline(m, col = "red", lty = 3)
+legend("bottomright", lty = 2:3, col = 1:2, cex = 0.8,
+       c("Raw proportions", "Posterior distribution of the parameters"))
+
+for(j in 1:J){ lines(rep(obs[j],2), ints[,j]) }
+```
+
+From the plot we can see that the posterior distribution of the parameters are similar to raw proportions, but varies less due to different observed rates.
+
+#### d) Give a 95% posterior interval for the average underlying proportion of traffic that is bicycles.
+```{r}
+temp <- quantile(mu.sim, c(.025, .975))
+temp
+hist(mu.sim, breaks=20)
+abline(v=temp, lty=2);
+```
+
+The 95% posterior interval for the average underlying proportion of traffic that is bicycles is [.148, .278]
+
+#### e) A new city block is sampled at random and is a residential street with a bike route. In an hour of observation, 100 vehicles of all kinds go by. Give a 95% posterior interval for the number of those vehicles that are bicycles. Discuss how much you trust this interval in application.
+```{r}
+theta.sim <- rbeta(S, alpha.sim, beta.sim)
+y.sim = matrix(rep("NA", S^2), nrow = S)
+y.sim <- rbinom(S^2, size=100, prob=theta.sim)
+temp <- quantile(y.sim, c(.025, .975))
+temp
+hist(y.sim, breaks=25)
+abline(v=temp, lty=2)
+```
+
+The 95% posterior interval for the number of those vehicles that are bicycles in a new city block in Berkeley is [4, 45]. 
+
+With no obeserved data for the new block, we can only derive the probability for this block from the poterior probability's ditribution. We draw 1000 simulations for theta, and draw 1000 simulations for y based on 1000 theta. Finally, we get the 2.5% and 97.5% quantile of the y. 
+
+In application for a new block in Berkeley, we believe that the number of 100 vehicles that are bicycles should have 95% probability more than 4 and less than 45.
+
+#### f) Was the beta distribution for the θj’s reasonable?
+
+It's reasonable to take beta distribution for theta because beta distribution is a proper prior. 
+Moreover beta distribution can be understood as representing a distribution of probabilities- that is, it represents all the possible values of a probability when we don't know what that probability is.
+
+
+### Charpter 5 Problem 15
+
+Meta-analysis: perform the computations for the meta-analysis data of Table 5.4.
+####  a) Plot the posterior density of τ over an appropriate range that includes essentially all of the posterior density, analogous to Figure 5.5.
+```{r}
+meta <- read.table("meta.txt", header=T)
+y0 <- meta$control.deaths
+n0 <- meta$control.total
+y1 <- meta$treated.deaths
+n1 <- meta$treated.total
+y <- log(y1 / (n1-y1)) - log(y0 / (n0-y0))
+sigma <- sqrt( 1/y0 + 1/(n0-y0) + 1/y1 + 1/(n1-y1) )
+J <- length(y)
+
+# Posterior distribution for hierarchical normal model
+log.post.tau.fun <- function(tau, y, sigma){
+ V.mu <- 1 / sum( 1/(sigma^2 + tau^2) )
+ mu.hat <- V.mu * sum( y / (sigma^2 + tau^2) )
+ log.post <- ( log(V.mu) - sum(log(sigma^2 + tau^2) ) ) / 2
+ log.post <- log.post - 0.5 * sum( (y-mu.hat)^2 / (sigma^2 + tau^2) )
+ return(log.post)
+}
+
+# Simulation
+log.tau <- seq(-30, -0.55, .01)
+T <- length(log.tau)
+log.post.tau <- rep(NA, T)
+for(t in 1:T){
+ log.post.tau[t] <- log.post.tau.fun(tau=exp(log.tau[t]), y, sigma)
+}
+temp <- max(log.post.tau)
+log.post.tau <- log.post.tau - temp
+post.tau <- exp(log.post.tau)
+
+# Plot the posterior density of ?? over an appropriate range
+plot(exp(log.tau), post.tau, type="l", xlab="tau", ylab="p(tau|y)")
+
+```
+
+#### b) Produce graphs analogous to Figures 5.6 and 5.7 to display how the posterior means and standard deviations of the θj’s depend on τ.
+
+```{r}
+# Calculate E(theta|tau,y), i.e., the "estimated treatment effects"
+ETE <- matrix(NA, T, J)
+for(t in 1:T){
+ tau <- exp(log.tau[t])
+ V.mu <- 1 / sum( 1 / (sigma^2 + tau^2) )
+ mu.hat <- V.mu * sum( y / (sigma^2 +  tau^2) )
+ ETE[t,] <- (y/sigma^2 + mu.hat/tau^2) / (1/sigma^2 + 1/tau^2)
+}
+
+# Plot E(theta|tau,y) against tau
+matplot(exp(log.tau), ETE, type="l", xlab="tau", ylab="E(theta|tau,y)", 
+        col=1:6, lty=1:5, ylim=range(ETE))
+legend("topleft", inset=.05, legend=paste("Study", 1:J, sep=" "), 
+       lty=1:5, col=1:6, cex = 0.3)
+
+# Calculate posterior SD of treatment effects, sd(theta,tau,y)
+VTE <- matrix(NA, T, J)
+for(t in 1:T){
+ tau <- exp(log.tau[t])
+ V <- 1 / (1/sigma^2 + 1/tau^2)
+ V.mu <- 1 / sum( 1 / (sigma^2 + tau^2) )
+ VTE[t,] <- V + V^2 * V.mu / tau^4
+}
+
+# Plot sd(theta|tau,y) against tau
+matplot(exp(log.tau), sqrt(VTE), type="l", xlab="tau", col=1:6,
+        lty=1:5, ylab="sd(theta|tau,y)", ylim=range(sqrt(VTE)))
+legend("topleft", inset=.05, legend=paste("Study", 1:J, sep=" "), 
+       lty=1:5, col=1:6, cex = 0.5)
+```
+
+As tau increase, the difference of E(theta|tau,y) between different study becomes greater and tend to converge to fixed values. The red line on the top which describes study 14 stay away from other lines.
+
+As tau increase, the difference of sd(theta|tau,y) between different study becomes greater.
+The black solid line at the top describes study 1, and the blue line at the bottom corresponds to study 10. We can conclude that, the highest posterior standard deviation is for the study with lowest sample size, and the lowest posterior SD is for that with greatest sample size.
+
+#### c) Produce a scatterplot of the crude effect estimates vs. the posterior median effect estimates of the 22 studies. Verify that the studies with smallest sample sizes are partially pooled the most toward the mean.
+```{r}
+# Separate (unpooled) estimation
+Ints <- y + qnorm(.975) * sigma %*% t(c(-1,1))
+plot((1:J)-.05, y, xlim=c(.5,J+.5), ylim=range(Ints), 
+     xlab="Study", ylab="Effect", xaxp=c(1,J,J-1))
+for(j in 1:J){ lines(c(j,j)-.05, Ints[j,]) }
+
+# Fully pooled estimation
+post.var <- 1 / sum(1/(sigma^2))
+post.mean <- sum(y/(sigma^2)) * post.var
+Int <- post.mean + c(-1,1) * qnorm(.975) * sqrt(post.var)
+points((1:J)+.05, rep(post.mean,J), pch=18, col=2)
+for(j in 1:J){ lines(c(j,j)+.05, Int, col=2) }
+
+# Sampling from the posterior p(theta|y)
+S <- 1000
+theta.sim <- matrix(NA, J, S)
+ytilde.sim <- matrix(NA, J, S)
+delta <- (log.tau[2] - log.tau[1]) / 2
+post.log.tau <- exp(log.tau) * post.tau
+
+for(s in 1:S){
+ t <- sample(T, 1, prob=post.log.tau)
+ tau <- exp(log.tau[t] + runif(1, -delta, delta))
+ V.mu <- 1 / sum( 1 / (sigma^2 + tau^2) )
+ mu.hat <- V.mu * sum( y / (sigma^2 +  tau^2) )
+ mu <- rnorm(1, mean=mu.hat, sd=sqrt(V.mu))
+ V <- 1 / (1/sigma^2 + 1/tau^2) 
+ theta.hat <- V * (y/sigma^2 + mu/tau^2)
+ theta.sim[,s] <- rnorm(J, mean=theta.hat, sd=sqrt(V))
+ ytilde.sim[,s] <- rnorm(J, mean=theta.sim[,s], sd=sigma)
+}
+quant <- function(x){ quantile(x, probs=c(.025,.25,.50,.75,.975)) }
+Results <- t(apply(theta.sim, 1, quant))
+post.median <- Results[,3]
+points((1:J), post.median, pch=20, col=3)
+for(j in 1:J){ lines(c(j,j), c(Results[j,1], Results[j,5]), col=3) }
+legend("topleft", fill = 1:3, cex = 0.7, legend = c("Separate (unpooled) estimation", 
+       "Fully pooled estimation", "The posterior median effect estimates"))
+
+# Order the studies from the smallest sample size to the greatest.
+n = n0 + n1
+sort.list(n)
+
+# Order the studies from pooled the most toward the mean to the least.
+delta_mean <- abs(y - post.median)
+sort.list(delta_mean, decreasing = TRUE)
+```
+
+From the two order list above ( The first one is the order of studies from the smallest sample size to the greatest. The second one is the order of studies from pooled the most toward the mean to the least.), we can see that studies with smaller sample size tends to be pooled more toward the mean. But the orderes don't match perfectly to each other.
+
+#### d) Draw simulations from the posterior distribution of a new treatment effect, θj. Plot a histogram of the simulations.
+
+```{r}
+# Sampling from the posterior distribution of a new treatment effect
+S <- 1000
+sigma_new <- 0.5
+theta.sim_new <- rep(Inf, S)
+ytilde.sim_new <- rep(Inf, S)
+delta <- (log.tau[2] - log.tau[1]) / 2
+post.log.tau <- exp(log.tau) * post.tau
+
+for(s in 1:S){
+ t <- sample(T, 1, prob=post.log.tau)
+ tau <- exp(log.tau[t] + runif(1, -delta, delta))
+ V.mu <- 1 / sum( 1 / (sigma^2 + tau^2) )
+ mu.hat <- V.mu * sum( y / (sigma^2 +  tau^2) )
+ theta.sim_new[s] <- rnorm(1, mean = mu.hat, sd = sqrt(V.mu))
+ ytilde.sim_new[s] <- rnorm(1, mean = theta.sim_new[s], sd = sigma_new)
+}
+
+temp <- quantile(theta.sim_new, c(.025, .975))
+hist(theta.sim_new, breaks=30)
+abline(v=temp, lty=2)
+```
+
+#### e) Given the simulations just obtained, draw simulated outcomes from replications of a hypothetical new experiment with 100 persons in each of the treated and control groups. Plot a histogram of the simulations of the crude estimated treatment effect (5.23) in the new experiment.
+```{r}
+temp <- quantile(ytilde.sim_new, c(.025, .975))
+hist(ytilde.sim_new, breaks=30)
+abline(v=temp, lty=2)
+abline(v = mean(ytilde.sim_new), lty = 4, col = 2)
+
+```
+
+### Chapter 6 Problem 10
+Checking the assumption of equal variance: Figures 1.1 and 1.2 on pages 14 and 15 display data on point spreads x and score differentials y of a set of professional football games. (The data are avalable at http://www.stat.columbia.edu/∼gelman/book/.) In Section 1.6, a model is fit of the form, y ∼ N(x,142). However, Figure 1.2a seems to show a pattern of decreasing variance of y − x as a function of x.
+
+Simulate several replicated datasets yrep under the model and, for each, create graphs like Figures 1.1 and 1.2. Display several graphs per page, and compare these to the corresponding graphs of the actual data. This is a graphical posterior predictive check as described in Section 6.4.
+
+```{r}
+# actual data
+mydata <- read.table("football.asc.txt", header = TRUE)
+mydata <- mydata[1:672, ]
+x <- mydata$spread
+y <- mydata$favorite - mydata$underdog
+y.jitter <- y + runif(672, -.2, .2)
+x.jitter <- x + runif(672, -.1, .1)
+plot((y.jitter-x)~x.jitter,cex=.5, ylab = "outcome", xlab = "spread")
+hist(y-x, breaks=30, freq = FALSE, xlab = "difference")
+curve(dnorm(x, mean=0, sd=14), add=TRUE, col = "red")
+
+# simulation
+# scatter plot
+actual_index <- sample(2:11,1)
+par(mfrow=c(3,4))
+for(s in 1:(actual_index-1)){
+  y.rep <- round(rnorm(672, x, 14))
+  y.rep.jitter <- y.rep + runif(672, -.2, .2)
+  plot((y.rep.jitter-x)~x.jitter,cex=.3,xlab="spread",ylab="difference")
+}
+plot((y.jitter-x)~x.jitter, cex=.3, xlab="spread", ylab="difference")
+for(s in (actual_index+1):12){
+  y.rep <- rnorm(672, x, 14)
+  y.rep.jitter <- y.rep + runif(672, -.2, .2)
+  plot((y.rep.jitter-x)~x.jitter,cex=.3,xlab="spread",ylab="difference")
+}
+actual_index
+```
+
+The actual data appear in the third plot. It is not notably different from the other 11. We cannot recognize which one is the plot for the actual data. So we cannot conclude that y's variance decreases along with x increasing.
+
+
+```{r}
+# histograms plot
+actual_index <- sample(2:11,1)
+par(mfrow=c(3,4))
+for(s in 1:(actual_index-1)){
+  y.rep <- round(rnorm(672, x, 14))
+  hist(y.rep-x, breaks=20, freq = FALSE, xlab = "difference")
+  curve(dnorm(x, mean=0, sd=14), add=TRUE, col = "red") 
+}
+hist(y-x, breaks=20, freq = FALSE, xlab = "difference")
+curve(dnorm(x, mean=0, sd=14), add=TRUE, col = "red")
+for(s in (actual_index+1):12){
+  y.rep <- rnorm(672, x, 14)
+  hist(y.rep-x, breaks=20, freq = FALSE, xlab = "difference")
+  curve(dnorm(x, mean=0, sd=14), add=TRUE, col = "red")
+}
+actual_index
+```
+
+The actual data appear in the ninth plot. It is similar to the seventh plot. We cannot recognize which one is the plot for the actual data. So we cannot conclude that y is left-skewed.
+
+So we can conclude that the y ~ Normal(mean=x, sd=14) model fits the data well.
+
+
+
+
+
