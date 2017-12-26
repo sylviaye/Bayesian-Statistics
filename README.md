@@ -11,4 +11,6 @@ Importance Sampler
 
 Markov chain Monte Carlo
 
-Gibbs Sampler
+Gibbs Sampling
+
+Bayesian Linear Regression
